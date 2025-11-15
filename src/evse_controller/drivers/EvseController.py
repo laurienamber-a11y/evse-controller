@@ -93,7 +93,7 @@ class EvseController(PowerMonitorObserver):
             tariffManager: Manager for electricity tariff rules and scheduling
         """
         # Add MAX_HISTORY_POINTS constant
-        self.MAX_HISTORY_POINTS = 300
+        self.MAX_HISTORY_POINTS = 420
 
         # Initialize power monitors
         # Initialize primary Shelly
@@ -139,6 +139,8 @@ class EvseController(PowerMonitorObserver):
         self.hysteresisWindow = 50 # Default hysteresis in Watts
         self.lastTargetCurrent = 0 # The current setpoint current in the last iteration
         self.current_grid_power = Power()
+         # For median filtering of home power
+        self._home_power_history = deque(maxlen=3)
         self.last_save_time = 0
         self.save_interval = 10  # Save every 10 seconds
         self.chargerState = EvseState.UNKNOWN
@@ -338,21 +340,52 @@ class EvseController(PowerMonitorObserver):
         Returns:
             int: Target current in Amps for the EVSE
         """
-        homeWatts = power.getHomeWatts()
+
+        # Median filter for home power (only filter out upward spikes >400W)
+        homeWatts_raw = power.getHomeWatts()
+        self._home_power_history.append(homeWatts_raw)
+        if len(self._home_power_history) == 3:
+            prev = self._home_power_history[-2]
+            if homeWatts_raw > prev and (homeWatts_raw - prev) > 400:
+                # If power increased by more than 400W, use median
+                homeWatts = sorted(self._home_power_history)[1]
+            else:
+                # If power dropped, stayed the same, or increased <= 400W, use raw
+                homeWatts = homeWatts_raw
+        else:
+            homeWatts = homeWatts_raw
+        debug(f"calculateTargetCurrent: HomeWatts(raw): {homeWatts_raw}, HomeWatts(filtered): {homeWatts}, Hysteresis: {self.hysteresisWindow}, lastTargetCurrent: {self.lastTargetCurrent}")
         desiredEvseCurrent = self.lastTargetCurrent  # Default to last current
 
-        # Determine desired current based on home power draw with hysteresis
+        # Find the current setpoint's range
+        current_range = None
         for min_power, max_power, target_current in self.homeDemandLevels:
-            if min_power - self.hysteresisWindow <= homeWatts < max_power + self.hysteresisWindow:
-                if (homeWatts < min_power or homeWatts > max_power) and target_current != self.lastTargetCurrent:
-                    continue  # Stay within hysteresis window
-                desiredEvseCurrent = -target_current
+            if self.lastTargetCurrent in (target_current, -target_current):
+                current_range = (min_power, max_power, target_current)
                 break
-            if min_power - self.hysteresisWindow <= -homeWatts < max_power + self.hysteresisWindow:
-                if (-homeWatts < min_power or -homeWatts > max_power) and target_current != self.lastTargetCurrent:
-                    continue  # Stay within hysteresis window
-                desiredEvseCurrent = target_current
-                break
+
+        # If we have a current setpoint, expand its range downward by hysteresis
+        in_hysteresis = False
+        if current_range:
+            min_power, max_power, target_current = current_range
+            expanded_min = min_power - self.hysteresisWindow
+            expanded_max = max_power
+            # If lastTargetCurrent is negative, invert homeWatts for discharge
+            check_power = homeWatts if self.lastTargetCurrent < 0 else -homeWatts if self.lastTargetCurrent > 0 else homeWatts
+            if expanded_min <= check_power < expanded_max:
+                in_hysteresis = True
+
+        if not in_hysteresis:
+            # Find the new setpoint
+            for min_power, max_power, target_current in self.homeDemandLevels:
+                if min_power <= homeWatts < max_power:
+                    desiredEvseCurrent = -target_current
+                    debug(f"calculateTargetCurrent: Map: min_power: {min_power}, max_power: {max_power}, target_current: -{target_current}")
+                    break
+                if min_power <= -homeWatts < max_power:
+                    desiredEvseCurrent = target_current
+                    debug(f"calculateTargetCurrent: Map: min_power: {min_power}, max_power: {max_power}, target_current: {target_current}")
+                    break
 
         # Apply control state logic
         match self.state:

@@ -51,7 +51,7 @@ The documentation provided has been tested with Docker and Podman. If you wish t
 
 1. **Start initial build and configuration of the system**
    ```bash
-   [docker|podman] compose build
+   docker compose build
    [docker|podman] compose run --rm controller -m evse_controller.configure
    ```
    You will need to enter details of your system. It is possible to change these details when the service is running using a web interface if you wish, or you can return to this step to change the configruation using the text interface at any time.

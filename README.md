@@ -230,7 +230,7 @@ For container-based deployments, see [CONTAINER_GUIDE.md](CONTAINER_GUIDE.md).
         ocpp_enable_soc_threshold: 30  # Enable OCPP when SoC drops below this level (%)
         ocpp_disable_soc_threshold: 95 # Disable OCPP when SoC reaches this level (%)
         ocpp_enable_time: "23:30"      # Time to enable OCPP if SoC threshold not reached
-        ocpp_disable_time: "11:00"     # Time to disable OCPP if SoC threshold not reached
+        ocpp_disable_time: "08:00"     # Time to disable OCPP if SoC threshold not reached
     ```
 
   Note: The old `configuration.py`/`secret.py` method has been removed. You should remove any existing `configuration.py` and `secret.py` files.
